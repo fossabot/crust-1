@@ -2,6 +2,10 @@ package service
 
 import (
 	"context"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/url"
 
 	"github.com/pkg/errors"
 	"github.com/titpetric/factory"
@@ -41,6 +45,8 @@ type (
 
 		Create(input *types.User) (*types.User, error)
 		Update(mod *types.User) (*types.User, error)
+
+		UpdateAvatar(user *types.User, avatar *multipart.FileHeader, avatarURL string) (*types.User, error)
 
 		Delete(id uint64) error
 		Suspend(id uint64) error
@@ -197,4 +203,36 @@ func (svc *user) Unsuspend(id uint64) error {
 
 		return svc.user.UnsuspendByID(id)
 	})
+}
+
+func (svc *user) updateAvatarFromReader(user *types.User, avatar io.Reader) (*types.User, error) {
+	return svc.user.UpdateAvatar(user, avatar)
+}
+
+func (svc *user) UpdateAvatar(user *types.User, avatar *multipart.FileHeader, avatarURL string) (*types.User, error) {
+	switch {
+	case avatar != nil:
+		reader, err := avatar.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer reader.Close()
+		return svc.updateAvatarFromReader(user, reader)
+	default:
+		if u, err := url.ParseRequestURI(avatarURL); err != nil {
+			return nil, errors.WithStack(err)
+		} else if u.Scheme != "https" {
+			return nil, errors.WithStack(ErrAvatarOnlyHTTPS)
+		}
+		resp, err := http.Get(avatarURL)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		defer resp.Body.Close()
+		return svc.updateAvatarFromReader(user, resp.Body)
+	}
+}
+
+func (svc *user) canLogin(u *types.User) bool {
+	return u != nil && u.ID > 0 && u.SuspendedAt == nil && u.DeletedAt == nil
 }

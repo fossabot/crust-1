@@ -16,7 +16,7 @@ type (
 		Email    string         `json:"email" db:"email"`
 		Name     string         `json:"name" db:"name"`
 		Handle   string         `json:"handle" db:"handle"`
-		Kind     string         `json:"kind" db:"kind"`
+		Kind     UserKind       `json:"kind" db:"kind"`
 		SatosaID string         `json:"-" db:"satosa_id"`
 		Meta     types.JSONText `json:"-" db:"meta"`
 
@@ -40,6 +40,13 @@ type (
 		Username string
 		OrderBy  string
 	}
+
+	UserKind string
+)
+
+const (
+	NormalUser UserKind = ""
+	BotUser             = "bot"
 )
 
 func (u *User) Valid() bool {
