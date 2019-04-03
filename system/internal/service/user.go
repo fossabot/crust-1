@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"mime/multipart"
 
 	"github.com/pkg/errors"
 	"github.com/titpetric/factory"
 
 	internalAuth "github.com/crusttech/crust/internal/auth"
+	"github.com/crusttech/crust/internal/store"
 	"github.com/crusttech/crust/system/internal/repository"
 	"github.com/crusttech/crust/system/types"
 )
@@ -39,8 +41,8 @@ type (
 
 		FindOrCreate(*types.User) (*types.User, error)
 
-		Create(input *types.User) (*types.User, error)
-		Update(mod *types.User) (*types.User, error)
+		Create(input *types.User, avatar *multipart.FileHeader, avatarURL string) (*types.User, error)
+		Update(mod *types.User, avatar *multipart.FileHeader, avatarURL string) (*types.User, error)
 
 		Delete(id uint64) error
 		Suspend(id uint64) error
@@ -115,21 +117,27 @@ func (svc *user) FindOrCreate(user *types.User) (out *types.User, err error) {
 	})
 }
 
-func (svc *user) Create(input *types.User) (out *types.User, err error) {
-	return out, svc.db.Transaction(func() error {
-		if out, err = svc.user.Create(input); err != nil {
+func (svc *user) Create(input *types.User, avatar *multipart.FileHeader, avatarURL string) (u *types.User, err error) {
+	return u, svc.db.Transaction(func() error {
+		if !svc.prm.CanCreateUser() {
+			return errors.New("not allowed to create users")
+		}
+
+		// Store avatar for user
+		if u, err = svc.bindAvatar(input, avatar, avatarURL); err != nil {
 			return err
 		}
 
-		if !svc.prm.CanCreateUser() {
-			return errors.New("not allowed to create users")
+		if u, err = svc.user.Create(u); err != nil {
+			svc.unbindAvatar(u)
+			return err
 		}
 
 		return nil
 	})
 }
 
-func (svc *user) Update(mod *types.User) (u *types.User, err error) {
+func (svc *user) Update(mod *types.User, avatar *multipart.FileHeader, avatarURL string) (u *types.User, err error) {
 	return u, svc.db.Transaction(func() (err error) {
 		if u, err = svc.user.FindByID(mod.ID); err != nil {
 			return
@@ -146,7 +154,13 @@ func (svc *user) Update(mod *types.User) (u *types.User, err error) {
 		u.Handle = mod.Handle
 		u.Kind = mod.Kind
 
+		// Store avatar for user
+		if u, err = svc.bindAvatar(u, avatar, avatarURL); err != nil {
+			return err
+		}
+
 		if u, err = svc.user.Update(u); err != nil {
+			svc.unbindAvatar(u)
 			return err
 		}
 
@@ -197,4 +211,23 @@ func (svc *user) Unsuspend(id uint64) error {
 
 		return svc.user.UnsuspendByID(id)
 	})
+}
+
+func (svc *user) bindAvatar(user *types.User, avatar *multipart.FileHeader, avatarURL string) (*types.User, error) {
+	if avatar == nil && avatarURL == "" {
+		return user, nil
+	}
+	reader, err := store.FromAny(avatar, avatarURL)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return svc.user.BindAvatar(user, reader)
+}
+
+func (svc *user) unbindAvatar(user *types.User) (*types.User, error) {
+	if user.Meta != nil {
+		user.Meta.Avatar = ""
+	}
+	return user, nil
 }
